@@ -4,7 +4,7 @@
   "description": "Multi TCP Server",
   "node-red": {
     "nodes": {
-      "tcp-server": "tcp-server.js"
+      "mtcp-server": "mtcp-server.js"
     }
   },
   "dependencies": {
