@@ -21,7 +21,7 @@ module.exports = function (RED) {
         var node = this;
 
         var servers = {};    
-        var defaultServerId = "default";
+        var defaultTopic = "default";
         var getServer = function(id, create){
             if (!servers[id] && create) {
                 servers[id] = {connectionPool: {}};
@@ -139,8 +139,9 @@ module.exports = function (RED) {
     
                         }
                         else {
-                            result.payload = data;
+                            result.payload = data;                            
                             nodeSend(result);
+                            console.log(result)
                         }
     
                     }
@@ -219,13 +220,13 @@ module.exports = function (RED) {
                         socket.destroy();
                         socket.unref();
 
-                        var server = getServer(connection.serverId);                        
+                        var server = getServer(connection.topic);                        
                         delete server.connectionPool[closeId];
     
                     }
 
                 } else {
-                    var sId = msg.serverId || defaultServerId;
+                    var sId = msg.topic || defaultTopic;
                     _close(sId);
                 }
                 
@@ -271,12 +272,12 @@ module.exports = function (RED) {
 
                 if (writeHost && writePort) {
 
-                    var writeId = findConnection(writeHost, writePort);
+                    var connection = findConnection(writeHost, writePort);
 
-                    if (writeId) {
-    
-                        var socket = connectionPool[writeId].socket;
-                   
+                    if (connection) {
+
+                        var socket = connection.socket;
+                  
                         if (Buffer.isBuffer(writeMsg)) {
                             socket.write(writeMsg);
                         } else if (typeof writeMsg === "string" && node.datatype == 'base64') {
@@ -288,37 +289,43 @@ module.exports = function (RED) {
                     }
 
                 } else {
-                    for (var connId in connectionPool) {
-                        if (connectionPool.hasOwnProperty(connId)) {
-                            var socket = connectionPool[connId].socket;
-                            if (Buffer.isBuffer(writeMsg)) {
-                                socket.write(writeMsg);
-                            } else if (typeof writeMsg === "string" && node.datatype == 'base64') {
-                                socket.write(Buffer.from(writeMsg, 'base64'));
-                            } else {
-                                socket.write(Buffer.from("" + writeMsg));
-                            }                       
-                        }
-                    }                    
+                    var sId = msg.topic || defaultTopic;
+                    var server = getServer(sId);
+                    if (server) {
+                        for (var connId in server.connectionPool) {
+                            if (server.connectionPool.hasOwnProperty(connId)) {
+                                var socket = server.connectionPool[connId].socket;
+                                if (Buffer.isBuffer(writeMsg)) {
+                                    socket.write(writeMsg);
+                                } else if (typeof writeMsg === "string" && node.datatype == 'base64') {
+                                    socket.write(Buffer.from(writeMsg, 'base64'));
+                                } else {
+                                    socket.write(Buffer.from("" + writeMsg));
+                                }  
+                                console.log("write:", msg);
+                            }
+                        }   
+                    }                 
                 }
 
             };
 
             var kill = () => {
-                var sId = msg.serverId;
+                var sId = msg.topic;
                 if (sId) {
                     stop(sId, false);
                 } else {
                     for (var sId in servers) {
                         stop(sId, true);
                         servers[sId] = undefined;
+                        console.log("server killed: ", sId);
                     }
                 }
             };
 
             var listen = () => {     
-                var sId = msg.serverId || defaultServerId;
-                var server = getServer(sId, create);     
+                var sId = msg.topic || defaultTopic;
+                var server = getServer(sId, true);     
 
                 if (typeof server.server === 'undefined') {
     
@@ -329,10 +336,10 @@ module.exports = function (RED) {
                         server.connectionPool[id] = {
                             socket: socket,
                             buffer: (node.datatype == 'buffer') ? Buffer.alloc(0) : "",
-                            serverId: serverId
+                            topic: sId
                         };
                         
-                        configure(id, serverId);
+                        configure(id, sId);
         
                     });
                     
@@ -344,7 +351,7 @@ module.exports = function (RED) {
 
                 server.server.listen(node.port, function (err) {
                     if (err) node.error(err);
-                    console.log("tcp server listin on port: ", node.port);
+                    console.log("tcp server: ", sId, " , listin on port: ", node.port);
                 });
 
             };
@@ -380,7 +387,10 @@ module.exports = function (RED) {
                     server.connectionPool = {};
                     server.server.close();
                     server.server = undefined;
-                }  
+                } 
+                delete servers[sId];
+
+                console.log("server killed: ", sId);
             }          
             servers = {};
             node.status({});
