@@ -1,5 +1,5 @@
 {
-  "name": "node-red-nd-tcp-server",
+  "name": "node-red-nd-mtcp-server",
   "version": "0.0.1",
   "description": "Multi TCP Server",
   "node-red": {
@@ -12,7 +12,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/czq7966/node-red-nd-tcp-server.git"
+    "url": "git+https://github.com/czq7966/node-red-nd-mtcp-server.git"
   },
   "keywords": [
     "node-red",
@@ -24,7 +24,7 @@
   "author": "CZQ",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/czq7966/node-red-nd-tcp-server/issues"
+    "url": "https://github.com/czq7966/node-red-nd-mtcp-server/issues"
   },
-  "homepage": "https://github.com/czq7966/node-red-nd-tcp-server#readme"
+  "homepage": "https://github.com/czq7966/node-red-nd-mtcp-server#readme"
 }

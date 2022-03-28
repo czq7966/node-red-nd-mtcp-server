@@ -4,7 +4,7 @@ module.exports = function (RED) {
 
     var socketTimeout = RED.settings.socketTimeout || null;
 
-    function TcpServer(config) {
+    function MTcpServer(config) {
 
         var net = require('net'); //https://nodejs.org/api/net.html
         var crypto = require('crypto');
@@ -19,24 +19,34 @@ module.exports = function (RED) {
         this.newline = (config.newline || "").replace("\\n","\n").replace("\\r","\r");
 
         var node = this;
-        
-        var connectionPool = {};
-        var server;
+
+        var servers = {};    
+        var defaultServerId = "default";
+        var getServer = function(id, create){
+            if (!servers[id] && create) {
+                servers[id] = {connectionPool: {}};
+            };
+
+            return servers[id];
+        };
 
         var findConnection = function(addr, port) {
 
-            var id = null;
-
-            for (var connId in connectionPool) {
-                if (connectionPool.hasOwnProperty(connId)) {
-                    if (connectionPool[connId].socket.remoteAddress == addr && connectionPool[connId].socket.remotePort == port) {
-                        id = connId;
-                        break;
+            var conn = null;
+            for (var sId in servers) {
+                var server = getServer(sId);
+                for (var connId in server.connectionPool) {
+                    if (server.connectionPool.hasOwnProperty(connId)) {
+                        if (server.connectionPool[connId].socket.remoteAddress == addr && server.connectionPool[connId].socket.remotePort == port) {
+                            conn = server.connectionPool[connId];
+                            return conn;
+                            break;
+                        }
                     }
                 }
             }
 
-            return id;
+            return conn;
             
         };
 		
@@ -46,15 +56,15 @@ module.exports = function (RED) {
                 node.action = RED.util.evaluateNodeProperty(config.action, config.actionType, this, msg);
             }
 
-            console.log(node.action, msg);
 
             if (config.portType === 'msg' || config.portType === 'flow' || config.portType === 'global') {
                 node.port = (RED.util.evaluateNodeProperty(config.port, config.portType, this, msg)) * 1;
             }
 
-            var configure = (id) => {
+            var configure = (id, sId) => {
+                var server = getServer(sId);
 
-                var socket = connectionPool[id].socket;
+                var socket = server.connectionPool[id].socket;
 
                 socket.setKeepAlive(true, 120000);
 
@@ -68,7 +78,7 @@ module.exports = function (RED) {
                         data = data.toString(node.datatype == 'xml' ? 'utf8' : node.datatype);
                     }
     
-                    var buffer = connectionPool[id].buffer;
+                    var buffer = server.connectionPool[id].buffer;
     
                     if (node.stream) {
     
@@ -145,15 +155,15 @@ module.exports = function (RED) {
     
                     }
     
-                    connectionPool[id].buffer = buffer;
+                    server.connectionPool[id].buffer = buffer;
 
                 });
 
                 socket.on('end', function () {
                     if (!node.stream || (node.datatype === "utf8" && node.newline !== "")) {
-                        var buffer = connectionPool[id].buffer;
+                        var buffer = server.connectionPool[id].buffer;
                         if (buffer.length > 0) nodeSend({ topic: msg.topic || config.topic, payload: buffer, _address: socket.remoteAddress, _port: socket.remotePort, _id: id });
-                        connectionPool[id].buffer = null;
+                        server.connectionPool[id].buffer = null;
                     }
                 });
 
@@ -162,7 +172,7 @@ module.exports = function (RED) {
                 });
 
                 socket.on('close', function () {
-                    delete connectionPool[id];
+                    delete server.connectionPool[id];
                 });
 
                 socket.on('error', function (err) {
@@ -171,8 +181,22 @@ module.exports = function (RED) {
 
             };
 
-            var close = () => {
+            var _close = (sId) => {
+                var server = getServer(sId);   
+                if (server) {
+                    for (var connId in server.connectionPool) {
+                        if (server.connectionPool.hasOwnProperty(connId)) {
+                            var socket = server.connectionPool[connId].socket;
+                            socket.end();
+                            socket.destroy();
+                            socket.unref(); 
+                        }
+                    }
+                    server.connectionPool = {};
+                }
+            }            
 
+            var close = () => {
                 var closeHost = node.closeHost;
                 var closePort = node.closePort;
 
@@ -186,37 +210,41 @@ module.exports = function (RED) {
 
                 if (closeHost && closePort) {
 
-                    var closeId = findConnection(closeHost, closePort);
+                    var connection = findConnection(closeHost, closePort);
 
-                    if (closeId) {
+                    if (connection) {
     
-                        var socket = connectionPool[closeId].socket;
+                        var socket = connection.socket;
                         socket.end();
                         socket.destroy();
                         socket.unref();
-    
-                        delete connectionPool[closeId];
+
+                        var server = getServer(connection.serverId);                        
+                        delete server.connectionPool[closeId];
     
                     }
 
                 } else {
-                    for (var connId in connectionPool) {
-                        if (connectionPool.hasOwnProperty(connId)) {
-                            var socket = connectionPool[connId].socket;
-                            socket.end();
-                            socket.destroy();
-                            socket.unref(); 
-                            console.log(connId, socket.remoteAddress, socket.remotePort);
-
-                        }
-                        console.log(connId);
-                    }
-
-                    connectionPool = {};
-
+                    var sId = msg.serverId || defaultServerId;
+                    _close(sId);
                 }
                 
             };
+
+
+
+            var stop = (sId, keep) => {                
+                if (sId) {
+                    var server = getServer(sId);   
+                    if (server) {
+                        _close(sId);
+                        server.server.close();
+                        delete server.server;
+                    }
+                    if (!keep) 
+                        delete servers[sId];
+                }
+            }
 
             var write = () => {
 
@@ -277,47 +305,44 @@ module.exports = function (RED) {
             };
 
             var kill = () => {
-
-                if (server) {
-
-                    for (var connId in connectionPool) {
-                        var socket = connectionPool[connId].socket;
-                        socket.end();
-                        socket.destroy();
-                        socket.unref();
+                var sId = msg.serverId;
+                if (sId) {
+                    stop(sId, false);
+                } else {
+                    for (var sId in servers) {
+                        stop(sId, true);
+                        servers[sId] = undefined;
                     }
-    
-                    connectionPool = {};
-                    server.close();
-
                 }
-
             };
 
-            var listen = () => {
+            var listen = () => {     
+                var sId = msg.serverId || defaultServerId;
+                var server = getServer(sId, create);     
 
-                if (typeof server === 'undefined') {
+                if (typeof server.server === 'undefined') {
     
-                    server = net.createServer(function (socket) {
+                    server.server = net.createServer(function (socket) {
 
                         var id = crypto.createHash('md5').update(`${socket.localAddress}${socket.localPort}${socket.remoteAddress}${socket.remotePort}`).digest("hex");
 
-                        connectionPool[id] = {
+                        server.connectionPool[id] = {
                             socket: socket,
-                            buffer: (node.datatype == 'buffer') ? Buffer.alloc(0) : ""
+                            buffer: (node.datatype == 'buffer') ? Buffer.alloc(0) : "",
+                            serverId: serverId
                         };
                         
-                        configure(id);
+                        configure(id, serverId);
         
                     });
                     
-                    server.on('error', function (err) {
+                    server.server.on('error', function (err) {
                         if (err) node.error(err);
                     });
     
                 }
 
-                server.listen(node.port, function (err) {
+                server.server.listen(node.port, function (err) {
                     if (err) node.error(err);
                     console.log("tcp server listin on port: ", node.port);
                 });
@@ -343,24 +368,26 @@ module.exports = function (RED) {
         });
 
         node.on("close",function() {
-            if (server) {
-
-                for (var connId in connectionPool) {
-                    var socket = connectionPool[connId].socket;
-                    socket.end();
-                    socket.destroy();
-                    socket.unref();
-                }
-
-                connectionPool = {};
-                server.close();
-
-            }            
+            for (var sId in servers) {            
+                var server = getServer(sId);  
+                if (server && server.server) {
+                    for (var connId in server.connectionPool) {
+                        var socket = server.connectionPool[connId].socket;
+                        socket.end();
+                        socket.destroy();
+                        socket.unref();
+                    }
+                    server.connectionPool = {};
+                    server.server.close();
+                    server.server = undefined;
+                }  
+            }          
+            servers = {};
             node.status({});
         });
 
     };
 
-    RED.nodes.registerType("tcp-server", TcpServer);
+    RED.nodes.registerType("mtcp-server", MTcpServer);
 
 };
