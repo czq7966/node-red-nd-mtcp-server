@@ -1,0 +1,13 @@
+.git
+node_modules
+src
+test
+webpack
+npm-debug.log
+.vscode
+package-lock.json
+webpack.config.js
+test.js
+tsconfig.json
+.npmignore
+.gitignore
