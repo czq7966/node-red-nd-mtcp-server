@@ -319,6 +319,8 @@ module.exports = function (RED) {
                         stop(sId, true);
                         servers[sId] = undefined;
                         console.log("server killed: ", sId);
+                        msg.status = "killed"
+                        node.status({fill:"red",shape:"dot",text: JSON.stringify(msg)});
                     }
                 }
             };
@@ -352,6 +354,8 @@ module.exports = function (RED) {
                 server.server.listen(node.port, function (err) {
                     if (err) node.error(err);
                     console.log("tcp server: ", sId, " , listin on port: ", node.port);
+                    msg.status = "listened";
+                    node.status({fill:"green",shape:"dot",text: JSON.stringify(msg)});
                 });
 
             };
